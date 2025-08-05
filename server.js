@@ -8,10 +8,11 @@ const app = express();
 const ADMIN_PASSWORD = "ChatGPT123";
 const dataFilePath = path.join(__dirname, "data.json");
 
+// === Allow frontends ===
 const allowedOrigins = [
   "https://nullspire-frontend-pi.vercel.app",
   "https://nullspire-frontend-ktmwv3kmz-dustinofbowes-projects.vercel.app",
-  "https://nullspire-frontend-v2-0-ffc94wq5z-dustinofbowes-projects.vercel.app"
+  "https://nullspire-frontend-v2-0.vercel.app"
 ];
 
 app.use(cors({
