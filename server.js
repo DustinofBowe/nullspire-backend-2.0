@@ -5,160 +5,135 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-const FRONTEND_URL = "https://nullspire-frontend-pi.vercel.app";
+const ADMIN_PASSWORD = "ChatGPT123";
+const dataFilePath = path.join(__dirname, "data.json");
 
-origin: [
-  FRONTEND_URL,
+const allowedOrigins = [
+  "https://nullspire-frontend-pi.vercel.app",
   "https://nullspire-frontend-ktmwv3kmz-dustinofbowes-projects.vercel.app",
   "https://nullspire-frontend-v2-0-ffc94wq5z-dustinofbowes-projects.vercel.app"
-],
+];
 
+app.use(cors({
+  origin: allowedOrigins,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Password"]
 }));
 
 app.use(bodyParser.json());
 
-const ADMIN_PASSWORD = "ChatGPT123";
-const dataFilePath = path.join(__dirname, "data.json");
-
+// === Character Storage ===
 let approvedCharacters = [];
 let pendingCharacters = [];
 let nextId = 1;
 
-// Load data on server start
+// === Load from data.json ===
 function loadData() {
   try {
-    const data = JSON.parse(fs.readFileSync(dataFilePath, "utf8"));
+    const raw = fs.readFileSync(dataFilePath, "utf8");
+    const data = JSON.parse(raw);
     approvedCharacters = data.approvedCharacters || [];
     pendingCharacters = data.pendingCharacters || [];
     nextId = data.nextId || 1;
     console.log("✅ Data loaded from data.json");
-  } catch (error) {
-    console.warn("⚠️ Could not load data.json. Starting with empty data.");
+  } catch {
+    console.warn("⚠️ Starting fresh. data.json missing or invalid.");
   }
 }
 
-// Save data on every change
+// === Save to data.json ===
 function saveData() {
-  const data = {
-    approvedCharacters,
-    pendingCharacters,
-    nextId
-  };
+  const data = { approvedCharacters, pendingCharacters, nextId };
   try {
     fs.writeFileSync(dataFilePath, JSON.stringify(data, null, 2));
     console.log("💾 Data saved to data.json");
-  } catch (error) {
-    console.error("❌ Failed to save data:", error);
+  } catch (err) {
+    console.error("❌ Failed to write to data.json:", err);
   }
 }
 
 loadData();
 
-// === API ROUTES ===
-
-// GET approved characters (search by partial name)
+// === Public: Lookup Characters ===
 app.get("/api/characters", (req, res) => {
-  const nameQuery = (req.query.name || "").toLowerCase();
+  const query = (req.query.name || "").toLowerCase();
   const matches = approvedCharacters.filter(c =>
-    c.name.toLowerCase().includes(nameQuery)
+    c.name.toLowerCase().includes(query)
   );
-  if (matches.length > 0) {
-    res.json(matches);
-  } else {
-    res.status(404).json({ error: "Character not found." });
-  }
+  if (matches.length) res.json(matches);
+  else res.status(404).json({ error: "Character not found." });
 });
 
-// SUBMIT new character
+// === Public: Submit New Character ===
 app.post("/api/submit", (req, res) => {
   const { name, level, organization, profession } = req.body;
   if (!name || !level || !organization || !profession) {
     return res.status(400).json({ error: "Missing fields" });
   }
-  const newChar = {
-    id: nextId++,
-    name,
-    level,
-    organization,
-    profession
-  };
+  const newChar = { id: nextId++, name, level, organization, profession };
   pendingCharacters.push(newChar);
   saveData();
   res.json({ message: "Submission received, pending approval." });
 });
 
-// === ADMIN AUTH MIDDLEWARE ===
+// === Admin Middleware ===
 function checkAdminPassword(req, res, next) {
-  const password = req.headers["x-admin-password"];
-  if (password === ADMIN_PASSWORD) {
-    next();
-  } else {
-    res.status(401).json({ error: "Unauthorized" });
-  }
+  const pass = req.headers["x-admin-password"];
+  if (pass === ADMIN_PASSWORD) next();
+  else res.status(401).json({ error: "Unauthorized" });
 }
 
-// GET all pending
+// === Admin Routes ===
 app.get("/api/pending", checkAdminPassword, (req, res) => {
   res.json(pendingCharacters);
 });
 
-// APPROVE character
 app.post("/api/pending/approve", checkAdminPassword, (req, res) => {
   const { id } = req.body;
   const index = pendingCharacters.findIndex(c => c.id === id);
   if (index === -1) return res.status(404).json({ error: "Not found" });
-
   const [approved] = pendingCharacters.splice(index, 1);
   approvedCharacters.push(approved);
   saveData();
   res.json({ message: "Character approved", character: approved });
 });
 
-// REJECT character
 app.post("/api/pending/reject", checkAdminPassword, (req, res) => {
   const { id } = req.body;
   const index = pendingCharacters.findIndex(c => c.id === id);
   if (index === -1) return res.status(404).json({ error: "Not found" });
-
   pendingCharacters.splice(index, 1);
   saveData();
   res.json({ message: "Character rejected" });
 });
 
-// GET all approved
 app.get("/api/approved", checkAdminPassword, (req, res) => {
   res.json(approvedCharacters);
 });
 
-// DELETE character
 app.post("/api/approved/delete", checkAdminPassword, (req, res) => {
   const { id } = req.body;
   const index = approvedCharacters.findIndex(c => c.id === id);
   if (index === -1) return res.status(404).json({ error: "Not found" });
-
   approvedCharacters.splice(index, 1);
   saveData();
   res.json({ message: "Character deleted" });
 });
 
-// EDIT character
 app.post("/api/approved/edit", checkAdminPassword, (req, res) => {
   const { id, field, value } = req.body;
   const char = approvedCharacters.find(c => c.id === id);
   if (!char) return res.status(404).json({ error: "Not found" });
-
   if (!["name", "level", "organization", "profession"].includes(field)) {
     return res.status(400).json({ error: "Invalid field" });
   }
-
   char[field] = value;
   saveData();
   res.json({ message: "Character updated", character: char });
 });
 
+// === Start Server ===
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Backend API running on port ${PORT}`);
+  console.log(`🚀 Backend running on port ${PORT}`);
 });
